@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gráfico BTC</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>₿ Bitcoin</h1>
+        
+        <div id="status" class="status connecting">Inicializando gráfico</div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div id="currentPrice" class="stat-value">Carregando...</div>
+                <div class="stat-label">Preço atual</div>
+            </div>
+            <div class="stat-card">
+                <div id="change24h" class="stat-value">-</div>
+                <div class="stat-label">Mudanças - últimas 24h</div>
+            </div>
+            <div class="stat-card">
+                <div id="volume24h" class="stat-value">-</div>
+                <div class="stat-label">Volume - últimas 24h</div>
+            </div>
+            <div class="stat-card">
+                <div id="lastUpdate" class="stat-value">-</div>
+                <div class="stat-label">Última Atualização</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="control-btn active" onclick="setTimeframe('1m')">1M</button>
+            <button class="control-btn" onclick="setTimeframe('5m')">5M</button>
+            <button class="control-btn" onclick="setTimeframe('15m')">15M</button>
+            <button class="control-btn" onclick="setTimeframe('1h')">1H</button>
+            <button class="control-btn" onclick="setTimeframe('4h')">4H</button>
+            <button class="control-btn" onclick="setTimeframe('1d')">1D</button>
+        </div>
+
+        <div class="chart-container">
+            <div id="candleChart" class="candle-chart"></div>
+            <div class="tooltip" id="tooltip"></div>
+        </div>
+    </div>
+
+    <script src="js/script.js">
+    </script>
+</body>
+</html>

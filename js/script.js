@@ -353,7 +353,7 @@ class ApiService {
       return this.requestCache.get(cacheKey).data;
     }
 
-    const url = `${this.baseUrls.coingecko}/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true`;
+    const url = 'https://pro-api.coingecko.com/api/v3/simple/price';
     
     try {
       const response = await this.makeRequest(url);
@@ -581,7 +581,6 @@ class ChartRenderer {
       left: `${x - width / 2}px`,
       width: `${width}px`,
       height: `${this.chart.chartHeight}px`,
-      top: "0px"
     });
 
     // Pavio
@@ -594,8 +593,10 @@ class ChartRenderer {
     // Corpo
     const body = this.createElement("div", "candle-body", {
       width: "100%",
+      position: 'absolute',
       height: `${bodyHeight}px`,
-      background: color
+      background: color,
+      top: `${coords.high + (coords.low - coords.high)/2}px`,
     });
 
     candleEl.appendChild(wick);
@@ -701,8 +702,8 @@ class ChartRenderer {
   }
 
   updateTooltipPosition(event, tooltip) {
-    tooltip.style.left = `${event.pageX - 60}px`;
-    tooltip.style.top = `${event.pageY - 100}px`;
+    tooltip.style.left = `${event.pageX - 250}px`;
+    tooltip.style.top = `${event.pageY - 600}px`;
   }
 
   priceToY(price) {

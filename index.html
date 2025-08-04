@@ -1,52 +1,131 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gráfico BTC</title>
+    <meta name="description" content="Gráfico em tempo real do Bitcoin com dados de candlestick e estatísticas atualizadas">
+    <meta name="keywords" content="bitcoin, btc, gráfico, candlestick, tempo real, criptomoeda">
+    <meta name="author" content="Bitcoin Chart App">
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="Gráfico Bitcoin em Tempo Real">
+    <meta property="og:description" content="Acompanhe o preço do Bitcoin com gráficos candlestick em tempo real">
+    <meta property="og:type" content="website">
+    
+    <title>₿ Bitcoin - Gráfico em Tempo Real</title>
+    
+    <!-- Preload critical resources -->
     <link rel="stylesheet" href="css/style.css">
+    <link rel="preload" href="js/script.js" as="script">
+    
+    
 </head>
 <body>
     <div class="container">
-        <h1>₿ Bitcoin</h1>
+        <header class="header">
+            <h1>₿ Bitcoin</h1>
+            <p class="subtitle">Gráfico em Tempo Real</p>
+        </header>
         
-        <div id="status" class="status connecting">Inicializando gráfico</div>
+        <div id="status" class="status connecting" role="status" aria-live="polite">
+            <span class="loading-spinner" aria-hidden="true"></span>
+            Inicializando gráfico...
+        </div>
         
-        <div class="stats">
-            <div class="stat-card">
-                <div id="currentPrice" class="stat-value">Carregando...</div>
-                <div class="stat-label">Preço atual</div>
+        <section class="stats" aria-label="Estatísticas do Bitcoin">
+            <div class="stat-card" role="group" aria-labelledby="price-label">
+                <div id="currentPrice" class="stat-value" aria-live="polite">
+                    <span class="loading-spinner" aria-hidden="true"></span>
+                </div>
+                <div id="price-label" class="stat-label">Preço Atual</div>
             </div>
-            <div class="stat-card">
-                <div id="change24h" class="stat-value">-</div>
-                <div class="stat-label">Mudanças - últimas 24h</div>
+            
+            <div class="stat-card" role="group" aria-labelledby="change-label">
+                <div id="change24h" class="stat-value" aria-live="polite">-</div>
+                <div id="change-label" class="stat-label">Variação 24h</div>
             </div>
-            <div class="stat-card">
-                <div id="volume24h" class="stat-value">-</div>
-                <div class="stat-label">Volume - últimas 24h</div>
+            
+            <div class="stat-card" role="group" aria-labelledby="volume-label">
+                <div id="volume24h" class="stat-value" aria-live="polite">-</div>
+                <div id="volume-label" class="stat-label">Volume 24h</div>
             </div>
-            <div class="stat-card">
-                <div id="lastUpdate" class="stat-value">-</div>
-                <div class="stat-label">Última Atualização</div>
+            
+            <div class="stat-card" role="group" aria-labelledby="update-label">
+                <div id="lastUpdate" class="stat-value" aria-live="polite">-</div>
+                <div id="update-label" class="stat-label">Última Atualização</div>
             </div>
-        </div>
+        </section>
 
-        <div class="controls">
-            <button class="control-btn active" onclick="setTimeframe('1m')">1M</button>
-            <button class="control-btn" onclick="setTimeframe('5m')">5M</button>
-            <button class="control-btn" onclick="setTimeframe('15m')">15M</button>
-            <button class="control-btn" onclick="setTimeframe('1h')">1H</button>
-            <button class="control-btn" onclick="setTimeframe('4h')">4H</button>
-            <button class="control-btn" onclick="setTimeframe('1d')">1D</button>
-        </div>
+        <nav class="controls" role="navigation" aria-label="Seleção de período do gráfico">
+            <button class="control-btn active" 
+                    data-timeframe="1m" 
+                    onclick="setTimeframe('1m')"
+                    aria-pressed="true"
+                    title="Visualizar gráfico de 1 minuto">
+                1M
+            </button>
+            <button class="control-btn" 
+                    data-timeframe="5m" 
+                    onclick="setTimeframe('5m')"
+                    aria-pressed="false"
+                    title="Visualizar gráfico de 5 minutos">
+                5M
+            </button>
+            <button class="control-btn" 
+                    data-timeframe="15m" 
+                    onclick="setTimeframe('15m')"
+                    aria-pressed="false"
+                    title="Visualizar gráfico de 15 minutos">
+                15M
+            </button>
+            <button class="control-btn" 
+                    data-timeframe="1h" 
+                    onclick="setTimeframe('1h')"
+                    aria-pressed="false"
+                    title="Visualizar gráfico de 1 hora">
+                1H
+            </button>
+            <button class="control-btn" 
+                    data-timeframe="4h" 
+                    onclick="setTimeframe('4h')"
+                    aria-pressed="false"
+                    title="Visualizar gráfico de 4 horas">
+                4H
+            </button>
+            <button class="control-btn" 
+                    data-timeframe="1d" 
+                    onclick="setTimeframe('1d')"
+                    aria-pressed="false"
+                    title="Visualizar gráfico diário">
+                1D
+            </button>
+        </nav>
 
-        <div class="chart-container">
-            <div id="candleChart" class="candle-chart"></div>
-            <div class="tooltip" id="tooltip"></div>
-        </div>
+        <main class="chart-container" role="main">
+            <div id="candleChart" 
+                 class="candle-chart" 
+                 role="img" 
+                 aria-label="Gráfico de candlestick do Bitcoin"
+                 tabindex="0">
+            </div>
+            
+            <div class="tooltip" 
+                 id="tooltip" 
+                 role="tooltip" 
+                 aria-hidden="true">
+            </div>
+        </main>
     </div>
 
-    <script src="js/script.js">
+
+
+    <!-- Main Script -->
+    <script src="js/script.js" defer></script>
+
+    <!-- Analytics (opcional) -->
+    <script>
+        // Google Analytics ou outra ferramenta de analytics
+        // gtag('config', 'GA_MEASUREMENT_ID');
     </script>
 </body>
 </html>

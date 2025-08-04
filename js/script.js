@@ -1,604 +1,761 @@
-let candlestickData = [];
-let currentTimeframe = "1m";
-let updateInterval;
-let priceUpdateInterval;
-let chartContainer;
-let chartWidth, chartHeight;
-let priceRange = { min: 60000, max: 70000 };
+/**
+ * Bitcoin Candlestick Chart - Versão Melhorada
+ * Melhorias aplicadas: arquitetura modular, tratamento de erros robusto,
+ * performance otimizada, código mais limpo e manutenível
+ */
 
-function initChart() {
-  try {
-    chartContainer = document.getElementById("candleChart");
-    updateChartDimensions();
-
-    fetchHistoricalData();
-
-    window.addEventListener("resize", handleResize);
-
-    updateStatus("connected", "Feed de dados em tempo real ativo");
-  } catch (error) {
-    console.error("Erro ao inicializar o gráfico:", error);
-    updateStatus("error", "Falha ao inicializar o gráfico");
-  }
-}
-
-function updateChartDimensions() {
-  const container = chartContainer.parentElement;
-  chartWidth = container.clientWidth - 100;
-  chartHeight = container.clientHeight - 80;
-}
-
-function handleResize() {
-  updateChartDimensions();
-  renderChart();
-}
-
-async function fetchHistoricalData() {
-  try {
-    updateStatus("connecting", "Buscando dados reais do Bitcoin...");
-
-    await fetchRealHistoricalData();
-
-    renderChart();
-    if (candlestickData.length > 0) {
-      updateStats(candlestickData[candlestickData.length - 1].c);
-    }
-    updateStatus("connected", "Dados em tempo real invocados");
-  } catch (error) {
-    console.error("Erro ao buscar dados:", error);
-    updateStatus(
-      "error",
-      "Falha ao atualizar em tempo real, utilizando contingência"
-    );
-    await fetchCurrentPriceOnly();
-  }
-}
-
-async function fetchRealHistoricalData() {
-  const intervals = getIntervalsForTimeframe();
-  const timeframeMinutes = getTimeframeMinutes();
-  const endTime = Math.floor(Date.now() / 1000);
-  const startTime = endTime - intervals * timeframeMinutes * 60;
-
-  const apiUrl = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${startTime}&to=${endTime}`;
-
-  try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Erro HTTP! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (data.prices && data.prices.length > 0) {
-      processRealPriceData(data.prices, timeframeMinutes);
-    } else {
-      throw new Error("Nenhum dado de preço recebido");
-    }
-  } catch (error) {
-    console.log("Falha no CoinGecko, tentando fonte alternativa...");
-    await fetchFromAlternativeSource();
-  }
-}
-
-async function fetchFromAlternativeSource() {
-  const interval = getBinanceInterval();
-  const limit = Math.min(getIntervalsForTimeframe(), 500);
-
-  const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
-
-  try {
-    const response = await fetch(binanceUrl);
-    if (!response.ok) {
-      throw new Error(`Erro na API da Binance! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (data && data.length > 0) {
-      processBinanceData(data);
-    } else {
-      throw new Error("Nenhum dado da Binance recebido");
-    }
-  } catch (error) {
-    console.log("Binance também falhou, usando apenas o preço atual...");
-    await fetchCurrentPriceOnly();
-  }
-}
-
-async function fetchCurrentPriceOnly() {
-  try {
-    const response = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-    );
-    const data = await response.json();
-
-    if (data.bitcoin && data.bitcoin.usd) {
-      const currentPrice = data.bitcoin.usd;
-      generateSimpleHistoricalData(currentPrice);
-    } else {
-      generateSimpleHistoricalData(65000);
-    }
-  } catch (error) {
-    console.error("Todas as APIs falharam, usando preço estimado");
-    generateSimpleHistoricalData(65000);
-  }
-}
-
-function processRealPriceData(prices, timeframeMinutes) {
-  candlestickData = [];
-  const timeframeMs = timeframeMinutes * 60 * 1000;
-
-  const buckets = new Map();
-
-  prices.forEach(([timestamp, price]) => {
-    const bucketTime = Math.floor(timestamp / timeframeMs) * timeframeMs;
-
-    if (!buckets.has(bucketTime)) {
-      buckets.set(bucketTime, []);
-    }
-    buckets.get(bucketTime).push({ timestamp, price });
-  });
-
-  let minPrice = Infinity;
-  let maxPrice = -Infinity;
-
-  Array.from(buckets.entries())
-    .sort(([a], [b]) => a - b)
-    .forEach(([bucketTime, pricePoints]) => {
-      if (pricePoints.length === 0) return;
-
-      pricePoints.sort((a, b) => a.timestamp - b.timestamp);
-
-      const open = pricePoints[0].price;
-      const close = pricePoints[pricePoints.length - 1].price;
-      const high = Math.max(...pricePoints.map((p) => p.price));
-      const low = Math.min(...pricePoints.map((p) => p.price));
-
-      const candle = {
-        time: new Date(bucketTime),
-        timestamp: bucketTime,
-        o: parseFloat(open.toFixed(2)),
-        h: parseFloat(high.toFixed(2)),
-        l: parseFloat(low.toFixed(2)),
-        c: parseFloat(close.toFixed(2)),
-      };
-
-      candlestickData.push(candle);
-
-      minPrice = Math.min(minPrice, low);
-      maxPrice = Math.max(maxPrice, high);
-    });
-
-  const padding = (maxPrice - minPrice) * 0.1;
-  priceRange.min = minPrice - padding;
-  priceRange.max = maxPrice + padding;
-}
-
-function processBinanceData(data) {
-  candlestickData = [];
-  let minPrice = Infinity;
-  let maxPrice = -Infinity;
-
-  data.forEach((kline) => {
-    const [openTime, open, high, low, close] = kline;
-
-    const candle = {
-      time: new Date(openTime),
-      timestamp: openTime,
-      o: parseFloat(open),
-      h: parseFloat(high),
-      l: parseFloat(low),
-      c: parseFloat(close),
+class BitcoinCandlestickChart {
+  constructor(containerId) {
+    this.containerId = containerId;
+    this.candlestickData = [];
+    this.currentTimeframe = "1m";
+    this.chartContainer = null;
+    this.chartWidth = 0;
+    this.chartHeight = 0;
+    this.priceRange = { min: 60000, max: 700000 };
+    
+    // Intervalos e timeouts
+    this.updateInterval = null;
+    this.priceUpdateInterval = null;
+    this.retryTimeout = null;
+    
+    // Configurações
+    this.config = {
+      maxRetries: 3,
+      retryDelay: 2000,
+      updateFrequency: 10000,
+      colors: {
+        bullish: "#00c853",
+        bearish: "#f44336",
+        grid: "#333",
+        text: "#fff"
+      },
+      timeframes: {
+        "1m": { minutes: 1, intervals: 60, binance: "1m" },
+        "5m": { minutes: 5, intervals: 60, binance: "5m" },
+        "15m": { minutes: 15, intervals: 60, binance: "15m" },
+        "1h": { minutes: 60, intervals: 48, binance: "1h" },
+        "4h": { minutes: 240, intervals: 48, binance: "4h" },
+        "1d": { minutes: 1440, intervals: 30, binance: "1d" }
+      }
     };
 
-    candlestickData.push(candle);
-
-    minPrice = Math.min(minPrice, candle.l);
-    maxPrice = Math.max(maxPrice, candle.h);
-  });
-
-  const padding = (maxPrice - minPrice) * 0.1;
-  priceRange.min = minPrice - padding;
-  priceRange.max = maxPrice + padding;
-}
-
-function generateSimpleHistoricalData(currentPrice) {
-  candlestickData = [];
-  const now = new Date();
-  const intervals = Math.min(getIntervalsForTimeframe(), 50);
-
-  let price = currentPrice * 0.995;
-  let minPrice = price;
-  let maxPrice = price;
-
-  for (let i = intervals; i >= 0; i--) {
-    const time = new Date(
-      now.getTime() - i * getTimeframeMinutes() * 60 * 1000
-    );
-
-    const volatility = 0.002;
-    const change = (Math.random() - 0.5) * volatility;
-
-    const open = price;
-    const close = open * (1 + change);
-    const high = Math.max(open, close) * (1 + Math.random() * volatility * 0.3);
-    const low = Math.min(open, close) * (1 - Math.random() * volatility * 0.3);
-
-    candlestickData.push({
-      time: time,
-      timestamp: time.getTime(),
-      o: parseFloat(open.toFixed(2)),
-      h: parseFloat(high.toFixed(2)),
-      l: parseFloat(low.toFixed(2)),
-      c: parseFloat(close.toFixed(2)),
-    });
-
-    price = close;
-    minPrice = Math.min(minPrice, low);
-    maxPrice = Math.max(maxPrice, high);
+    this.apiService = new ApiService();
+    this.chartRenderer = new ChartRenderer(this);
+    this.uiController = new UIController(this);
+    
+    this.init();
   }
 
-  if (candlestickData.length > 0) {
-    const lastCandle = candlestickData[candlestickData.length - 1];
-    lastCandle.c = currentPrice;
-    lastCandle.h = Math.max(lastCandle.h, currentPrice);
-    lastCandle.l = Math.min(lastCandle.l, currentPrice);
-    maxPrice = Math.max(maxPrice, currentPrice);
-  }
-
-  const padding = (maxPrice - minPrice) * 0.1;
-  priceRange.min = minPrice - padding;
-  priceRange.max = maxPrice + padding;
-}
-
-function getBinanceInterval() {
-  const intervals = {
-    "1m": "1m",
-    "5m": "5m",
-    "15m": "15m",
-    "1h": "1h",
-    "4h": "4h",
-    "1d": "1d",
-  };
-  return intervals[currentTimeframe] || "1m";
-}
-
-function renderChart() {
-  if (!chartContainer || candlestickData.length === 0) return;
-
-  chartContainer.innerHTML = "";
-
-  createGrid();
-
-  const candleWidth = Math.max(
-    2,
-    Math.floor((chartWidth / candlestickData.length) * 0.8)
-  );
-  const candleSpacing = chartWidth / candlestickData.length;
-
-  candlestickData.forEach((candle, index) => {
-    const x = index * candleSpacing + candleSpacing / 2;
-    createCandle(candle, x, candleWidth, index);
-  });
-
-  createAxes();
-}
-
-function createGrid() {
-  const gridLines = 8;
-  for (let i = 0; i <= gridLines; i++) {
-    const y = (i / gridLines) * chartHeight;
-    const gridLine = document.createElement("div");
-    gridLine.className = "grid-line horizontal";
-    gridLine.style.top = y + "px";
-    gridLine.style.left = "0px";
-    gridLine.style.right = "60px";
-    chartContainer.appendChild(gridLine);
-  }
-
-  const timeLines = 6;
-  for (let i = 0; i <= timeLines; i++) {
-    const x = (i / timeLines) * chartWidth;
-    const gridLine = document.createElement("div");
-    gridLine.className = "grid-line vertical";
-    gridLine.style.left = x + "px";
-    gridLine.style.top = "0px";
-    gridLine.style.bottom = "30px";
-    chartContainer.appendChild(gridLine);
-  }
-}
-
-function createCandle(candle, x, width, index) {
-  const isGreen = candle.c > candle.o;
-  const color = isGreen ? "#00c853" : "#f44336";
-
-  const highY = priceToY(candle.h);
-  const lowY = priceToY(candle.l);
-  const openY = priceToY(candle.o);
-  const closeY = priceToY(candle.c);
-
-  const bodyTop = Math.min(openY, closeY);
-  const bodyBottom = Math.max(openY, closeY);
-  const bodyHeight = Math.max(1, bodyBottom - bodyTop);
-
-  const candleEl = document.createElement("div");
-  candleEl.className = "candle";
-  candleEl.style.left = x - width / 2 + "px";
-  candleEl.style.width = width + "px";
-  candleEl.style.height = chartHeight + "px";
-  candleEl.style.top = "0px";
-
-  const wick = document.createElement("div");
-  wick.className = "candle-wick";
-  wick.style.top = highY + "px";
-  wick.style.height = lowY - highY + "px";
-  wick.style.background = color;
-  candleEl.appendChild(wick);
-
-  const body = document.createElement("div");
-  body.className = "candle-body";
-  body.style.position = "absolute";
-  body.style.left = "0px";
-  body.style.width = "100%";
-  body.style.top = bodyTop + "px";
-  body.style.height = bodyHeight + "px";
-  body.style.background = color;
-  candleEl.appendChild(body);
-
-  candleEl.addEventListener("mouseenter", (e) => showTooltip(e, candle));
-  candleEl.addEventListener("mouseleave", hideTooltip);
-
-  chartContainer.appendChild(candleEl);
-}
-
-function createAxes() {
-  const yAxis = document.createElement("div");
-  yAxis.className = "chart-axis y-axis";
-
-  const priceSteps = 8;
-  for (let i = 0; i <= priceSteps; i++) {
-    const price =
-      priceRange.min + (priceRange.max - priceRange.min) * (1 - i / priceSteps);
-    const y = (i / priceSteps) * chartHeight;
-
-    const label = document.createElement("div");
-    label.style.position = "absolute";
-    label.style.top = y - 6 + "px";
-    label.style.left = "5px";
-    label.style.fontSize = "10px";
-    label.textContent =
-      "$" + price.toLocaleString(undefined, { maximumFractionDigits: 0 });
-    yAxis.appendChild(label);
-  }
-
-  chartContainer.appendChild(yAxis);
-
-  const xAxis = document.createElement("div");
-  xAxis.className = "chart-axis x-axis";
-
-  const timeSteps = 6;
-  for (let i = 0; i <= timeSteps; i++) {
-    const dataIndex = Math.floor(
-      ((candlestickData.length - 1) * i) / timeSteps
-    );
-    if (dataIndex < candlestickData.length) {
-      const candle = candlestickData[dataIndex];
-      const x = (i / timeSteps) * chartWidth;
-
-      const label = document.createElement("div");
-      label.style.position = "absolute";
-      label.style.left = x - 25 + "px";
-      label.style.top = "5px";
-      label.style.fontSize = "10px";
-      label.style.width = "50px";
-      label.style.textAlign = "center";
-      label.textContent = formatTime(candle.time);
-      xAxis.appendChild(label);
+  async init() {
+    try {
+      this.setupContainer();
+      this.bindEvents();
+      await this.loadInitialData();
+      this.startLiveUpdates();
+      this.uiController.updateStatus("connected", "Feed de dados em tempo real ativo");
+    } catch (error) {
+      console.error("Erro ao inicializar o gráfico:", error);
+      this.uiController.updateStatus("error", "Falha ao inicializar o gráfico");
     }
   }
 
-  chartContainer.appendChild(xAxis);
-}
+  setupContainer() {
+    this.chartContainer = document.getElementById(this.containerId);
+    if (!this.chartContainer) {
+      throw new Error(`Container ${this.containerId} não encontrado`);
+    }
+    this.updateChartDimensions();
+  }
 
-function priceToY(price) {
-  return (
-    chartHeight *
-    (1 - (price - priceRange.min) / (priceRange.max - priceRange.min))
-  );
-}
+  updateChartDimensions() {
+    const container = this.chartContainer.parentElement;
+    this.chartWidth = Math.max(300, container.clientWidth - 100);
+    this.chartHeight = Math.max(200, container.clientHeight - 80);
+  }
 
-function formatTime(date) {
-  if (currentTimeframe === "1d") {
-    return date.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
-  } else {
-    return date.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  bindEvents() {
+    window.addEventListener("resize", this.debounce(() => {
+      this.updateChartDimensions();
+      this.chartRenderer.render();
+    }, 250));
+
+    window.addEventListener("beforeunload", () => this.cleanup());
+  }
+
+  async loadInitialData() {
+    try {
+      this.uiController.updateStatus("connecting", "Buscando dados reais do Bitcoin...");
+      
+      const data = await this.apiService.fetchHistoricalData(
+        this.currentTimeframe,
+        this.config.timeframes[this.currentTimeframe]
+      );
+      
+      this.processCandlestickData(data);
+      this.chartRenderer.render();
+      this.updateStatistics();
+      
+      this.uiController.updateStatus("connected", "Dados em tempo real carregados");
+    } catch (error) {
+      console.error("Erro ao carregar dados iniciais:", error);
+      this.uiController.updateStatus("error", "Falha ao carregar dados - usando modo offline");
+      this.generateFallbackData();
+    }
+  }
+
+  processCandlestickData(data) {
+    if (!data || data.length === 0) {
+      throw new Error("Dados inválidos recebidos");
+    }
+
+    this.candlestickData = data.map(item => ({
+      time: new Date(item.timestamp),
+      timestamp: item.timestamp,
+      o: this.roundPrice(item.open),
+      h: this.roundPrice(item.high),
+      l: this.roundPrice(item.low),
+      c: this.roundPrice(item.close)
+    }));
+
+    this.updatePriceRange();
+  }
+
+  updatePriceRange() {
+    if (this.candlestickData.length === 0) return;
+
+    const prices = this.candlestickData.flatMap(candle => [candle.h, candle.l]);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const padding = (maxPrice - minPrice) * 0.1;
+
+    this.priceRange = {
+      min: minPrice - padding,
+      max: maxPrice + padding
+    };
+  }
+
+  async setTimeframe(timeframe) {
+    if (!this.config.timeframes[timeframe]) {
+      console.warn(`Timeframe inválido: ${timeframe}`);
+      return;
+    }
+
+    this.currentTimeframe = timeframe;
+    this.uiController.updateTimeframeButtons(timeframe);
+    
+    try {
+      this.uiController.updateStatus("connecting", `Carregando dados de ${timeframe}...`);
+      await this.loadInitialData();
+    } catch (error) {
+      console.error("Erro ao alterar timeframe:", error);
+      this.uiController.updateStatus("error", "Falha ao alterar período");
+    }
+  }
+
+  startLiveUpdates() {
+    this.stopLiveUpdates();
+    this.priceUpdateInterval = setInterval(() => {
+      this.updateLivePrice();
+    }, this.config.updateFrequency);
+  }
+
+  stopLiveUpdates() {
+    if (this.priceUpdateInterval) {
+      clearInterval(this.priceUpdateInterval);
+      this.priceUpdateInterval = null;
+    }
+  }
+
+  async updateLivePrice() {
+    try {
+      const priceData = await this.apiService.fetchCurrentPrice();
+      this.updateLastCandle(priceData);
+      this.updateStatistics(priceData);
+      this.chartRenderer.render();
+    } catch (error) {
+      console.error("Erro ao atualizar preço:", error);
+    }
+  }
+
+  updateLastCandle(priceData) {
+    if (this.candlestickData.length === 0) return;
+
+    const lastCandle = this.candlestickData[this.candlestickData.length - 1];
+    const now = new Date();
+    const timeframeMs = this.config.timeframes[this.currentTimeframe].minutes * 60 * 1000;
+
+    if (now.getTime() - lastCandle.timestamp >= timeframeMs) {
+      // Criar nova vela
+      const newCandle = {
+        time: now,
+        timestamp: now.getTime(),
+        o: lastCandle.c,
+        h: Math.max(lastCandle.c, priceData.price),
+        l: Math.min(lastCandle.c, priceData.price),
+        c: priceData.price
+      };
+
+      this.candlestickData.push(newCandle);
+      
+      // Manter apenas o número necessário de velas
+      const maxCandles = this.config.timeframes[this.currentTimeframe].intervals;
+      if (this.candlestickData.length > maxCandles) {
+        this.candlestickData.shift();
+      }
+    } else {
+      // Atualizar vela atual
+      lastCandle.c = priceData.price;
+      lastCandle.h = Math.max(lastCandle.h, priceData.price);
+      lastCandle.l = Math.min(lastCandle.l, priceData.price);
+    }
+
+    this.updatePriceRange();
+  }
+
+  updateStatistics(priceData) {
+    if (!priceData && this.candlestickData.length > 0) {
+      const lastCandle = this.candlestickData[this.candlestickData.length - 1];
+      priceData = { price: lastCandle.c };
+    }
+
+    if (priceData) {
+      this.uiController.updatePriceDisplay(priceData, this.candlestickData);
+    }
+  }
+
+  generateFallbackData(basePrice = 65000) {
+    const intervals = this.config.timeframes[this.currentTimeframe].intervals;
+    const timeframeMs = this.config.timeframes[this.currentTimeframe].minutes * 60 * 1000;
+    const now = Date.now();
+    
+    this.candlestickData = [];
+    let price = basePrice * 0.995;
+
+    for (let i = intervals; i >= 0; i--) {
+      const timestamp = now - (i * timeframeMs);
+      const volatility = 0.002;
+      const change = (Math.random() - 0.5) * volatility;
+
+      const open = price;
+      const close = open * (1 + change);
+      const high = Math.max(open, close) * (1 + Math.random() * volatility * 0.3);
+      const low = Math.min(open, close) * (1 - Math.random() * volatility * 0.3);
+
+      this.candlestickData.push({
+        time: new Date(timestamp),
+        timestamp,
+        o: this.roundPrice(open),
+        h: this.roundPrice(high),
+        l: this.roundPrice(low),
+        c: this.roundPrice(close)
+      });
+
+      price = close;
+    }
+
+    this.updatePriceRange();
+    this.chartRenderer.render();
+  }
+
+  roundPrice(price) {
+    return parseFloat(price.toFixed(2));
+  }
+
+  debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  cleanup() {
+    this.stopLiveUpdates();
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+    }
   }
 }
 
-function showTooltip(event, candle) {
-  const tooltip = document.getElementById("tooltip");
-
-  tooltip.innerHTML = `
-    <div><strong>Tempo:</strong> ${candle.time.toLocaleString()}</div>
-    <div><strong>Abertura:</strong> $${candle.o.toLocaleString()}</div>
-    <div><strong>Alta:</strong> $${candle.h.toLocaleString()}</div>
-    <div><strong>Baixa:</strong> $${candle.l.toLocaleString()}</div>
-    <div><strong>Fechamento:</strong> $${candle.c.toLocaleString()}</div>
-  `;
-
-  tooltip.style.display = "block";
-
-  updateTooltipPosition(event);
-
-  document.addEventListener("mousemove", updateTooltipPosition);
-
-  function updateTooltipPosition(e) {
-    tooltip.style.left = e.pageX - 60 + "px"; 
-    tooltip.style.top = e.pageY - 400 + "px";
+/**
+ * Serviço para gerenciar chamadas às APIs
+ */
+class ApiService {
+  constructor() {
+    this.baseUrls = {
+      coingecko: "https://api.coingecko.com/api/v3",
+      binance: "https://api.binance.com/api/v3"
+    };
+    this.requestCache = new Map();
+    this.cacheTimeout = 30000; // 30 segundos
   }
-}
 
-function hideTooltip() {
-  document.getElementById("tooltip").style.display = "none";
-}
+  async fetchHistoricalData(timeframe, config) {
+    const cacheKey = `historical-${timeframe}`;
+    
+    if (this.isCacheValid(cacheKey)) {
+      return this.requestCache.get(cacheKey).data;
+    }
 
-async function updateLivePrice() {
-  try {
-    const response = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
-    );
-    const data = await response.json();
+    try {
+      const data = await this.fetchFromCoingecko(config);
+      this.setCache(cacheKey, data);
+      return data;
+    } catch (error) {
+      console.log("CoinGecko falhou, tentando Binance...");
+      try {
+        const data = await this.fetchFromBinance(config);
+        this.setCache(cacheKey, data);
+        return data;
+      } catch (binanceError) {
+        console.error("Todas as APIs falharam:", binanceError);
+        throw new Error("Falha ao obter dados históricos");
+      }
+    }
+  }
 
-    if (data.bitcoin && data.bitcoin.usd && candlestickData.length > 0) {
-      const currentPrice = data.bitcoin.usd;
-      const lastCandle = candlestickData[candlestickData.length - 1];
-      const now = new Date();
-      const timeframeMs = getTimeframeMinutes() * 60 * 1000;
+  async fetchFromCoingecko(config) {
+    const endTime = Math.floor(Date.now() / 1000);
+    const startTime = endTime - (config.intervals * config.minutes * 60);
+    
+    const url = `${this.baseUrls.coingecko}/coins/bitcoin/market_chart/range?vs_currency=usd&from=${startTime}&to=${endTime}`;
+    
+    const response = await this.makeRequest(url);
+    
+    if (!response.prices || response.prices.length === 0) {
+      throw new Error("Dados de preço inválidos do CoinGecko");
+    }
 
-      if (data.bitcoin.usd_24h_change) {
-        const changeEl = document.getElementById("change24h");
-        const change = data.bitcoin.usd_24h_change;
-        changeEl.textContent =
-          (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
-        changeEl.style.color = change >= 0 ? "#00c853" : "#f44336";
+    return this.processCoingeckoData(response.prices, config.minutes);
+  }
+
+  async fetchFromBinance(config) {
+    const url = `${this.baseUrls.binance}/klines?symbol=BTCUSDT&interval=${config.binance}&limit=${Math.min(config.intervals, 500)}`;
+    
+    const response = await this.makeRequest(url);
+    
+    if (!Array.isArray(response) || response.length === 0) {
+      throw new Error("Dados inválidos da Binance");
+    }
+
+    return this.processBinanceData(response);
+  }
+
+  async fetchCurrentPrice() {
+    const cacheKey = "current-price";
+    
+    if (this.isCacheValid(cacheKey)) {
+      return this.requestCache.get(cacheKey).data;
+    }
+
+    const url = `${this.baseUrls.coingecko}/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true`;
+    
+    try {
+      const response = await this.makeRequest(url);
+      
+      if (!response.bitcoin || !response.bitcoin.usd) {
+        throw new Error("Dados de preço atual inválidos");
       }
 
-      if (data.bitcoin.usd_24h_vol) {
-        document.getElementById("volume24h").textContent =
-          (data.bitcoin.usd_24h_vol / 1000000).toFixed(1) + "M USD";
+      const priceData = {
+        price: response.bitcoin.usd,
+        change24h: response.bitcoin.usd_24h_change || 0,
+        volume24h: response.bitcoin.usd_24h_vol || 0
+      };
+
+      this.setCache(cacheKey, priceData);
+      return priceData;
+    } catch (error) {
+      console.error("Erro ao buscar preço atual:", error);
+      throw error;
+    }
+  }
+
+  async makeRequest(url, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      if (now.getTime() - lastCandle.timestamp >= timeframeMs) {
-        const newCandle = {
-          time: now,
-          timestamp: now.getTime(),
-          o: lastCandle.c,
-          h: Math.max(lastCandle.c, currentPrice),
-          l: Math.min(lastCandle.c, currentPrice),
-          c: currentPrice,
+      return await response.json();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  }
+
+  processCoingeckoData(prices, timeframeMinutes) {
+    const timeframeMs = timeframeMinutes * 60 * 1000;
+    const buckets = new Map();
+
+    prices.forEach(([timestamp, price]) => {
+      const bucketTime = Math.floor(timestamp / timeframeMs) * timeframeMs;
+      
+      if (!buckets.has(bucketTime)) {
+        buckets.set(bucketTime, []);
+      }
+      buckets.get(bucketTime).push({ timestamp, price });
+    });
+
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([bucketTime, pricePoints]) => {
+        pricePoints.sort((a, b) => a.timestamp - b.timestamp);
+        
+        return {
+          timestamp: bucketTime,
+          open: pricePoints[0].price,
+          close: pricePoints[pricePoints.length - 1].price,
+          high: Math.max(...pricePoints.map(p => p.price)),
+          low: Math.min(...pricePoints.map(p => p.price))
         };
+      });
+  }
 
-        candlestickData.push(newCandle);
+  processBinanceData(klines) {
+    return klines.map(([openTime, open, high, low, close]) => ({
+      timestamp: openTime,
+      open: parseFloat(open),
+      high: parseFloat(high),
+      low: parseFloat(low),
+      close: parseFloat(close)
+    }));
+  }
 
-        const maxCandles = getIntervalsForTimeframe();
-        if (candlestickData.length > maxCandles) {
-          candlestickData.shift();
-        }
+  isCacheValid(key) {
+    const cached = this.requestCache.get(key);
+    return cached && (Date.now() - cached.timestamp < this.cacheTimeout);
+  }
 
-        updatePriceRange();
-        renderChart();
-      } else {
-        lastCandle.c = currentPrice;
-        lastCandle.h = Math.max(lastCandle.h, currentPrice);
-        lastCandle.l = Math.min(lastCandle.l, currentPrice);
+  setCache(key, data) {
+    this.requestCache.set(key, {
+      data,
+      timestamp: Date.now()
+    });
+  }
+}
 
-        updatePriceRange();
-        renderChart();
-      }
+/**
+ * Controlador da interface do usuário
+ */
+class UIController {
+  constructor(chart) {
+    this.chart = chart;
+  }
 
-      updateStats(currentPrice);
+  updateStatus(type, message) {
+    const statusEl = document.getElementById("status");
+    if (statusEl) {
+      statusEl.className = `status ${type}`;
+      statusEl.textContent = message;
     }
-  } catch (error) {
-    console.error("Error updating live price:", error);
   }
-}
 
-function updatePriceRange() {
-  if (candlestickData.length === 0) return;
+  updateTimeframeButtons(activeTimeframe) {
+    document.querySelectorAll(".control-btn").forEach(btn => {
+      btn.classList.remove("active");
+      if (btn.dataset.timeframe === activeTimeframe) {
+        btn.classList.add("active");
+      }
+    });
+  }
 
-  let minPrice = candlestickData[0].l;
-  let maxPrice = candlestickData[0].h;
+  updatePriceDisplay(priceData, candlestickData) {
+    // Preço atual
+    const priceEl = document.getElementById("currentPrice");
+    if (priceEl) {
+      priceEl.textContent = `$${priceData.price.toLocaleString()}`;
+    }
 
-  candlestickData.forEach((candle) => {
-    minPrice = Math.min(minPrice, candle.l);
-    maxPrice = Math.max(maxPrice, candle.h);
-  });
-
-  const padding = (maxPrice - minPrice) * 0.1;
-  priceRange.min = minPrice - padding;
-  priceRange.max = maxPrice + padding;
-}
-
-function updateStats(price) {
-  document.getElementById("currentPrice").textContent =
-    "$" + price.toLocaleString();
-
-  if (candlestickData.length >= 2) {
-    const firstPrice = candlestickData[0].o;
-    const change = ((price - firstPrice) / firstPrice) * 100;
+    // Mudança 24h
     const changeEl = document.getElementById("change24h");
-    changeEl.textContent = (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
-    changeEl.style.color = change >= 0 ? "#00c853" : "#f44336";
+    if (changeEl && priceData.change24h !== undefined) {
+      const change = priceData.change24h;
+      changeEl.textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+      changeEl.style.color = change >= 0 ? this.chart.config.colors.bullish : this.chart.config.colors.bearish;
+    }
+
+    // Volume 24h
+    const volumeEl = document.getElementById("volume24h");
+    if (volumeEl && priceData.volume24h) {
+      volumeEl.textContent = `${(priceData.volume24h / 1000000).toFixed(1)}M USD`;
+    }
+
+    // Última atualização
+    const updateEl = document.getElementById("lastUpdate");
+    if (updateEl) {
+      updateEl.textContent = new Date().toLocaleTimeString();
+    }
+  }
+}
+
+/**
+ * Renderizador do gráfico
+ */
+class ChartRenderer {
+  constructor(chart) {
+    this.chart = chart;
   }
 
-  const volume = (Math.random() * 50000 + 10000).toFixed(0);
-  document.getElementById("volume24h").textContent = volume + " BTC";
+  render() {
+    if (!this.chart.chartContainer || this.chart.candlestickData.length === 0) {
+      return;
+    }
 
-  document.getElementById("lastUpdate").textContent =
-    new Date().toLocaleTimeString();
+    this.chart.chartContainer.innerHTML = "";
+    
+    this.createGrid();
+    this.renderCandles();
+    this.createAxes();
+  }
+
+  createGrid() {
+    const gridLines = 8;
+    
+    // Linhas horizontais
+    for (let i = 0; i <= gridLines; i++) {
+      const y = (i / gridLines) * this.chart.chartHeight;
+      const gridLine = this.createElement("div", "grid-line horizontal", {
+        top: `${y}px`,
+        left: "0px",
+        right: "60px"
+      });
+      this.chart.chartContainer.appendChild(gridLine);
+    }
+
+    // Linhas verticais
+    const timeLines = 6;
+    for (let i = 0; i <= timeLines; i++) {
+      const x = (i / timeLines) * this.chart.chartWidth;
+      const gridLine = this.createElement("div", "grid-line vertical", {
+        left: `${x}px`,
+        top: "0px",
+        bottom: "30px"
+      });
+      this.chart.chartContainer.appendChild(gridLine);
+    }
+  }
+
+  renderCandles() {
+    const candleWidth = Math.max(2, Math.floor((this.chart.chartWidth / this.chart.candlestickData.length) * 0.8));
+    const candleSpacing = this.chart.chartWidth / this.chart.candlestickData.length;
+
+    this.chart.candlestickData.forEach((candle, index) => {
+      const x = index * candleSpacing + candleSpacing / 2;
+      this.createCandle(candle, x, candleWidth);
+    });
+  }
+
+  createCandle(candle, x, width) {
+    const isGreen = candle.c > candle.o;
+    const color = isGreen ? this.chart.config.colors.bullish : this.chart.config.colors.bearish;
+
+    const coords = {
+      high: this.priceToY(candle.h),
+      low: this.priceToY(candle.l),
+      open: this.priceToY(candle.o),
+      close: this.priceToY(candle.c)
+    };
+
+    const bodyTop = Math.min(coords.open, coords.close);
+    const bodyBottom = Math.max(coords.open, coords.close);
+    const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+
+    // Container da vela
+    const candleEl = this.createElement("div", "candle", {
+      left: `${x - width / 2}px`,
+      width: `${width}px`,
+      height: `${this.chart.chartHeight}px`,
+      top: "0px"
+    });
+
+    // Pavio
+    const wick = this.createElement("div", "candle-wick", {
+      top: `${coords.high}px`,
+      height: `${coords.low - coords.high}px`,
+      background: color
+    });
+
+    // Corpo
+    const body = this.createElement("div", "candle-body", {
+      width: "100%",
+      height: `${bodyHeight}px`,
+      background: color
+    });
+
+    candleEl.appendChild(wick);
+    candleEl.appendChild(body);
+
+    // Eventos de tooltip
+    candleEl.addEventListener("mouseenter", (e) => this.showTooltip(e, candle));
+    candleEl.addEventListener("mouseleave", () => this.hideTooltip());
+
+    this.chart.chartContainer.appendChild(candleEl);
+  }
+
+  createAxes() {
+    this.createYAxis();
+    this.createXAxis();
+  }
+
+  createYAxis() {
+    const yAxis = this.createElement("div", "chart-axis y-axis");
+    const priceSteps = 8;
+
+    for (let i = 0; i <= priceSteps; i++) {
+      const price = this.chart.priceRange.min + 
+        (this.chart.priceRange.max - this.chart.priceRange.min) * (1 - i / priceSteps);
+      const y = (i / priceSteps) * this.chart.chartHeight;
+
+      const label = this.createElement("div", "", {
+        position: "absolute",
+        top: `${y - 6}px`,
+        left: "5px",
+        fontSize: "10px"
+      });
+      
+      label.textContent = `$${price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      yAxis.appendChild(label);
+    }
+
+    this.chart.chartContainer.appendChild(yAxis);
+  }
+
+  createXAxis() {
+    const xAxis = this.createElement("div", "chart-axis x-axis");
+    const timeSteps = 6;
+
+    for (let i = 0; i <= timeSteps; i++) {
+      const dataIndex = Math.floor(((this.chart.candlestickData.length - 1) * i) / timeSteps);
+      
+      if (dataIndex < this.chart.candlestickData.length) {
+        const candle = this.chart.candlestickData[dataIndex];
+        const x = (i / timeSteps) * this.chart.chartWidth;
+
+        const label = this.createElement("div", "", {
+          position: "absolute",
+          left: `${x - 25}px`,
+          top: "5px",
+          fontSize: "10px",
+          width: "50px",
+          textAlign: "center"
+        });
+
+        label.textContent = this.formatTime(candle.time);
+        xAxis.appendChild(label);
+      }
+    }
+
+    this.chart.chartContainer.appendChild(xAxis);
+  }
+
+  showTooltip(event, candle) {
+    const tooltip = document.getElementById("tooltip");
+    if (!tooltip) return;
+
+    tooltip.innerHTML = `
+      <div><strong>Tempo:</strong> ${candle.time.toLocaleString()}</div>
+      <div><strong>Abertura:</strong> $${candle.o.toLocaleString()}</div>
+      <div><strong>Alta:</strong> $${candle.h.toLocaleString()}</div>
+      <div><strong>Baixa:</strong> $${candle.l.toLocaleString()}</div>
+      <div><strong>Fechamento:</strong> $${candle.c.toLocaleString()}</div>
+    `;
+
+    tooltip.style.display = "block";
+    this.updateTooltipPosition(event, tooltip);
+
+    // Remover listeners anteriores
+    document.removeEventListener("mousemove", this.tooltipMoveHandler);
+    
+    // Adicionar novo listener
+    this.tooltipMoveHandler = (e) => this.updateTooltipPosition(e, tooltip);
+    document.addEventListener("mousemove", this.tooltipMoveHandler);
+  }
+
+  hideTooltip() {
+    const tooltip = document.getElementById("tooltip");
+    if (tooltip) {
+      tooltip.style.display = "none";
+    }
+    
+    // Remover listener
+    if (this.tooltipMoveHandler) {
+      document.removeEventListener("mousemove", this.tooltipMoveHandler);
+      this.tooltipMoveHandler = null;
+    }
+  }
+
+  updateTooltipPosition(event, tooltip) {
+    tooltip.style.left = `${event.pageX - 60}px`;
+    tooltip.style.top = `${event.pageY - 100}px`;
+  }
+
+  priceToY(price) {
+    return this.chart.chartHeight * 
+      (1 - (price - this.chart.priceRange.min) / (this.chart.priceRange.max - this.chart.priceRange.min));
+  }
+
+  formatTime(date) {
+    if (this.chart.currentTimeframe === "1d") {
+      return date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric"
+      });
+    } else {
+      return date.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+  }
+
+  createElement(tag, className = "", styles = {}) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    
+    Object.entries(styles).forEach(([property, value]) => {
+      element.style[property] = value;
+    });
+
+    return element;
+  }
 }
 
-function updateStatus(type, message) {
-  const statusEl = document.getElementById("status");
-  statusEl.className = `status ${type}`;
-  statusEl.textContent = message;
-}
+// Inicialização global
+let bitcoinChart;
 
-async function setTimeframe(timeframe) {
-  currentTimeframe = timeframe;
-
-  document.querySelectorAll(".control-btn").forEach((btn) => {
-    btn.classList.remove("active");
-  });
-  event.target.classList.add("active");
-
-  updateStatus("connecting", `Carregando dados de ${timeframe}...`);
-  await fetchHistoricalData();
-}
-
-function getTimeframeMinutes() {
-  const timeframes = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-  };
-  return timeframes[currentTimeframe] || 1;
-}
-
-function getIntervalsForTimeframe() {
-  const intervals = {
-    "1m": 60,
-    "5m": 60,
-    "15m": 60,
-    "1h": 48,
-    "4h": 48,
-    "1d": 30,
-  };
-  return intervals[currentTimeframe] || 60;
-}
-
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", function() {
   try {
-    initChart();
-
-    priceUpdateInterval = setInterval(updateLivePrice, 10000);
+    bitcoinChart = new BitcoinCandlestickChart("candleChart");
+    
+    // Função global para mudança de timeframe (compatibilidade com HTML existente)
+    window.setTimeframe = function(timeframe) {
+      if (bitcoinChart) {
+        bitcoinChart.setTimeframe(timeframe);
+      }
+    };
+    
   } catch (error) {
     console.error("Erro de inicialização:", error);
-    updateStatus("error", "Falha ao inicializar aplicação");
   }
 });
 
-window.addEventListener("beforeunload", function () {
-  if (updateInterval) clearInterval(updateInterval);
-  if (priceUpdateInterval) clearInterval(priceUpdateInterval);
-});
+// Exportar para uso em outros módulos (se necessário)
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { BitcoinCandlestickChart, ApiService, ChartRenderer, UIController };
+}

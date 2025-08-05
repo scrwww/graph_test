@@ -594,9 +594,9 @@ class ChartRenderer {
     const body = this.createElement("div", "candle-body", {
       width: "100%",
       position: 'absolute',
-      height: `${bodyHeight}px`,
+      height: `${bodyHeight}\px`,
       background: color,
-      top: `${coords.high + (coords.low - coords.high)/2}px`,
+      top: `${coords.high + (coords.low - coords.high)/2 - bodyHeight/2}px`,
     });
 
     candleEl.appendChild(wick);
